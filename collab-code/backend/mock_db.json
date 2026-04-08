@@ -1,0 +1,43 @@
+{
+  "users": [
+    {
+      "email": "a@a.com",
+      "pass_hash": "$2a$12$85MqywaTn6yVNy1TcRX2uuoQUtJAUnyp/WGLSzgnWw5v3cKl45wYS",
+      "display_name": "akshay",
+      "id": "a27f72c5-9bc7-4997-9743-ca4f6db54996",
+      "created_at": "2026-04-07T13:08:09.624Z",
+      "updated_at": "2026-04-07T13:08:09.624Z",
+      "last_login": null,
+      "plan": "FREE"
+    },
+    {
+      "email": "b@b.com",
+      "pass_hash": "$2a$12$ywTJpa/5lMmUfzmWavD.M.gtX/HCD9t8N0Lj5m69T2FEVjap252aO",
+      "display_name": "Nisarg",
+      "id": "a5bacf1a-92f4-44a8-a62c-9a1f489804e5",
+      "created_at": "2026-04-07T13:13:10.727Z",
+      "updated_at": "2026-04-07T13:13:10.727Z",
+      "last_login": null,
+      "plan": "FREE"
+    }
+  ],
+  "rooms": [
+    {
+      "name": "hackathon",
+      "owner_id": "a5bacf1a-92f4-44a8-a62c-9a1f489804e5",
+      "id": "7080d30f-9be5-4732-8b2d-368cace1c497",
+      "created_at": "2026-04-07T13:13:21.720Z",
+      "updated_at": "2026-04-07T13:13:21.720Z"
+    }
+  ],
+  "room_members": [
+    {
+      "room_id": "7080d30f-9be5-4732-8b2d-368cace1c497",
+      "user_id": "a5bacf1a-92f4-44a8-a62c-9a1f489804e5",
+      "role": "OWNER",
+      "id": "047de812-b377-4816-b472-8d154e0eecf1",
+      "joined_at": "2026-04-07T13:13:21.724Z"
+    }
+  ],
+  "project_files": []
+}

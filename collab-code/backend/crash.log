@@ -1,0 +1,7 @@
+Error: Connection terminated unexpectedly
+    at Connection.<anonymous> (C:\Users\nisar\Desktop\Hackathon\COLLAB CODE\new collab(NIRMA)\collab-code\backend\node_modules\pg\lib\client.js:180:73)
+    at Object.onceWrapper (node:events:632:28)
+    at Connection.emit (node:events:518:28)
+    at Socket.<anonymous> (C:\Users\nisar\Desktop\Hackathon\COLLAB CODE\new collab(NIRMA)\collab-code\backend\node_modules\pg\lib\connection.js:61:12)
+    at Socket.emit (node:events:530:35)
+    at TCP.<anonymous> (node:net:346:12)

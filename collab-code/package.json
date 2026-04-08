@@ -1,0 +1,30 @@
+{
+  "engines": {
+    "node": "18.x"
+  },
+  "scripts": {
+    "install:backend": "cd backend && npm install",
+    "install:client": "cd client && npm install",
+    "install:collab": "cd collab && npm install",
+    "install:all": "npm install && npm run install:backend && npm run install:client && npm run install:collab",
+    "prisma:generate": "cd collab && npx prisma generate",
+    "prisma:migrate": "cd collab && npx prisma migrate dev",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "dev:collab": "cd collab && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:client\" \"npm run dev:collab\"",
+    "build": "npm run install:all && cd client && npm run build",
+    "start": "cd backend && node index.js"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "axios": "^1.13.5",
+    "jwt-decode": "^4.0.0",
+    "monaco-editor": "^0.55.1",
+    "pg": "^8.20.0",
+    "y-monaco": "^0.1.6"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

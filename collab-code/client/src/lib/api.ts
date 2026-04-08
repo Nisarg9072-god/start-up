@@ -1,0 +1,300 @@
+const API_URL = (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_API_BASE || "http://localhost:3001/api";
+
+const getToken = () => localStorage.getItem("token");
+const authHeader = () => ({ Authorization: `Bearer ${getToken()}` });
+const jsonHeaders = () => ({ "Content-Type": "application/json", ...authHeader() });
+
+const safeFetch = async (url: string, options?: RequestInit) => {
+  try {
+    const response = await fetch(url, options);
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.includes("application/json")) {
+      if (url.includes("/health/")) return null;
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+      return null;
+    }
+
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body?.error || body?.message || `Request failed with status ${response.status}`);
+    }
+
+    if (body && typeof body === "object" && "success" in body) {
+      return body.data !== undefined ? body.data : body;
+    }
+    return body;
+  } catch (err: any) {
+    if (url.includes("/health/")) return null;
+    throw err;
+  }
+};
+
+export const api = {
+  auth: {
+    login: async (credentials: any) => {
+      return safeFetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+    },
+    register: async (credentials: any) => {
+      return safeFetch(`${API_URL}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+    },
+    me: async () => {
+      return safeFetch(`${API_URL}/auth/me`, { headers: authHeader() });
+    }
+  },
+
+  workspaces: {
+    list: async () => {
+      return safeFetch(`${API_URL}/workspaces`, { headers: authHeader() });
+    },
+    create: async (name: string) => {
+      return safeFetch(`${API_URL}/workspaces`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name }),
+      });
+    },
+    get: async (id: string) => {
+      return safeFetch(`${API_URL}/workspaces/${id}`, { headers: authHeader() });
+    },
+    update: async (id: string, name: string) => {
+      return safeFetch(`${API_URL}/workspaces/${id}`, {
+        method: "PATCH",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name }),
+      });
+    },
+    delete: async (id: string) => {
+      return safeFetch(`${API_URL}/workspaces/${id}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+    },
+    join: async (workspaceId: string) => {
+      return safeFetch(`${API_URL}/workspaces/join`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ workspaceId }),
+      });
+    },
+    invite: async (workspaceId: string, email: string, role: string = "EDITOR") => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/invite`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ email, role }),
+      });
+    },
+    getMembers: async (workspaceId: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/members`, { headers: authHeader() });
+    },
+    removeMember: async (workspaceId: string, userId: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/members/${userId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+    },
+    updateRole: async (workspaceId: string, userId: string, role: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/members/${userId}/role`, {
+        method: "PUT",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ role }),
+      });
+    },
+    getInvitations: async (workspaceId: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/invitations`, { headers: authHeader() });
+    },
+    cancelInvitation: async (workspaceId: string, inviteId: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/invitations/${inviteId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+    },
+    enterPresence: async (id: string) => {
+      return fetch(`${API_URL}/workspaces/${id}/presence/enter`, {
+        method: "POST",
+        headers: authHeader(),
+      }).catch(() => null);
+    },
+    leavePresence: async (id: string) => {
+      return fetch(`${API_URL}/workspaces/${id}/presence/leave`, {
+        method: "POST",
+        headers: authHeader(),
+      }).catch(() => null);
+    },
+    getPresence: async (id: string) => {
+      return safeFetch(`${API_URL}/workspaces/${id}/presence`, { headers: authHeader() });
+    },
+    export: async (id: string) => {
+      const response = await fetch(`${API_URL}/workspaces/${id}/export`, { headers: authHeader() });
+      if (!response.ok) throw new Error("Export failed");
+      return response.blob();
+    },
+    activity: async (id: string) => {
+      return safeFetch(`${API_URL}/workspaces/${id}/activity`, { headers: authHeader() });
+    },
+    search: async (workspaceId: string, query: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/search`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ query }),
+      });
+    },
+    collabToken: (workspaceId: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/collab-token`, { headers: authHeader() }),
+  },
+
+  files: {
+    list: async (workspaceId: string) => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/files`, { headers: authHeader() });
+    },
+    get: async (fileId: string) => {
+      return safeFetch(`${API_URL}/files/${fileId}`, { headers: authHeader() });
+    },
+    create: async (workspaceId: string, name: string, content: string = "", language: string = "plaintext") => {
+      return safeFetch(`${API_URL}/workspaces/${workspaceId}/files`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name, content, language }),
+      });
+    },
+    update: async (fileId: string, contentOrMeta: string | { content?: string; language?: string; name?: string }) => {
+      const body = typeof contentOrMeta === "string" ? { content: contentOrMeta } : contentOrMeta;
+      return safeFetch(`${API_URL}/files/${fileId}`, {
+        method: "PATCH",
+        headers: jsonHeaders(),
+        body: JSON.stringify(body),
+      });
+    },
+    delete: async (fileId: string) => {
+      return safeFetch(`${API_URL}/files/${fileId}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+    },
+    restore: async (fileId: string, versionId: string) => {
+      return safeFetch(`${API_URL}/files/${fileId}/restore`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ versionId }),
+      });
+    }
+  },
+
+  runner: {
+    runJudge0: async (source_code: string, language_id: number, stdin?: string, fileId?: string) => {
+      return safeFetch(`${API_URL}/judge0/run`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ source_code, language_id, stdin, fileId }),
+      });
+    },
+    runFile: async (fileId: string, language: string, stdin?: string) => {
+      return safeFetch(`${API_URL}/runner/run`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ fileId, language, stdin }),
+      });
+    }
+  },
+
+  invitations: {
+    list: () => safeFetch(`${API_URL}/invitations`, { headers: authHeader() }),
+    accept: (inviteId: string) => safeFetch(`${API_URL}/invitations/${inviteId}/accept`, { method: "POST", headers: authHeader() }),
+    reject: (inviteId: string) => safeFetch(`${API_URL}/invitations/${inviteId}/reject`, { method: "POST", headers: authHeader() }),
+  },
+
+  joinRequests: {
+    request: (workspaceId: string, message?: string) =>
+      safeFetch(`${API_URL}/workspaces/request-access`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ workspaceId, message }),
+      }),
+    list: (workspaceId: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/requests`, { headers: authHeader() }),
+    approve: (requestId: string, role?: string) =>
+      safeFetch(`${API_URL}/requests/${requestId}/approve`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ role }),
+      }),
+    reject: (requestId: string) => safeFetch(`${API_URL}/requests/${requestId}/reject`, { method: "POST", headers: authHeader() }),
+  },
+
+  git: {
+    status: (workspaceId: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/git/status`, { headers: authHeader() }),
+    diff: (workspaceId: string, fileName: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/git/diff/${fileName}`, { headers: authHeader() }),
+    add: (workspaceId: string, files: string[]) => safeFetch(`${API_URL}/workspaces/${workspaceId}/git/add`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ files }),
+    }),
+    commit: (workspaceId: string, message: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/git/commit`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ message }),
+    }),
+    log: (workspaceId: string) => safeFetch(`${API_URL}/workspaces/${workspaceId}/git/log`, { headers: authHeader() }),
+  },
+
+  payment: {
+    createOrder: (plan: string) => safeFetch(`${API_URL}/payment/create-order`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ plan }),
+    }),
+    verify: (paymentData: any) => safeFetch(`${API_URL}/payment/verify`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify(paymentData),
+    }),
+  },
+
+  sessions: {
+    // The backend doesn't have a dedicated sessions API; return null gracefully to avoid crashes.
+    get: async (_workspaceId: string): Promise<null> => null,
+  },
+
+  health: {
+    db: () => safeFetch(`${API_URL}/health/db`),
+  },
+  usage: {
+    status: () => safeFetch(`${API_URL}/usage/status`, { headers: authHeader() }),
+    report: (workspaceId: string, seconds: number) => safeFetch(`${API_URL}/usage/report`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ workspaceId, seconds }),
+    }),
+  },
+};
+
+// ─── Workspace-level broadcast WebSocket ────────────────────────────────────
+// Connects to ws://localhost:3001/ws and returns the WebSocket instance.
+// Use this to listen for file_created / file_deleted / file_renamed events.
+const WS_BASE = (import.meta as any).env?.VITE_WS_URL ||
+  (window.location.hostname === 'localhost'
+    ? 'ws://localhost:3001'
+    : `wss://${window.location.hostname}:3001`);
+
+export function openWorkspaceSocket(
+  workspaceId: string,
+  token: string,
+  onMessage: (data: any) => void
+): WebSocket | null {
+  try {
+    const ws = new WebSocket(`${WS_BASE}/ws?workspaceId=${encodeURIComponent(workspaceId)}&token=${encodeURIComponent(token)}`);
+    ws.onmessage = (event) => {
+      try { onMessage(JSON.parse(event.data)); } catch { }
+    };
+    ws.onerror = () => { /* silent — real-time sync is additive */ };
+    return ws;
+  } catch {
+    return null;
+  }
+}
