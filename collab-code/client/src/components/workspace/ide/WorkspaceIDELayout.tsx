@@ -6,6 +6,7 @@ import BottomPanel from './BottomPanel';
 import StatusBar from './StatusBar';
 import { IDEState, SidebarSection, BottomTab, EditorTab } from './types';
 import { cn } from '@/lib/utils';
+import { X } from 'lucide-react';
 
 interface WorkspaceIDELayoutProps {
   children: React.ReactNode;
@@ -25,6 +26,7 @@ interface WorkspaceIDELayoutProps {
   onClearTerminal?: () => void;
   ideState: IDEState;
   setIdeState: React.Dispatch<React.SetStateAction<IDEState>>;
+  onToggleRightPanel?: () => void;
 }
 
 const WorkspaceIDELayout: React.FC<WorkspaceIDELayoutProps> = ({
@@ -44,7 +46,8 @@ const WorkspaceIDELayout: React.FC<WorkspaceIDELayoutProps> = ({
   role,
   onClearTerminal,
   ideState,
-  setIdeState
+  setIdeState,
+  onToggleRightPanel
 }) => {
   const handleSidebarResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -56,6 +59,30 @@ const WorkspaceIDELayout: React.FC<WorkspaceIDELayoutProps> = ({
       setIdeState(prev => ({
         ...prev,
         sidebar: { ...prev.sidebar, width: Math.max(160, Math.min(600, startWidth + dx)) }
+      }));
+    };
+
+    const onMouseUp = () => {
+      document.body.style.cursor = 'default';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleRightPanelResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = ideState.rightPanel.width;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const dx = startX - moveEvent.clientX;
+      setIdeState(prev => ({
+        ...prev,
+        rightPanel: { ...prev.rightPanel, width: Math.max(200, Math.min(600, startWidth + dx)) }
       }));
     };
 
@@ -117,6 +144,8 @@ const WorkspaceIDELayout: React.FC<WorkspaceIDELayoutProps> = ({
             ...prev, 
             sidebar: { ...prev.sidebar, visible: !prev.sidebar.visible } 
           }))}
+          onToggleRightPanel={onToggleRightPanel}
+          rightPanelVisible={ideState.rightPanel.visible}
         />
 
         {/* Sidebar */}
@@ -140,8 +169,35 @@ const WorkspaceIDELayout: React.FC<WorkspaceIDELayoutProps> = ({
           />
           
           <div className="flex-1 relative overflow-hidden flex flex-col">
-            <div className="flex-1 relative overflow-hidden">
-              {children}
+            <div className="flex-1 relative overflow-hidden flex">
+              <div className="flex-1 relative overflow-hidden">
+                {children}
+              </div>
+
+              {/* Right Panel (AI / Assistant) */}
+              {ideState.rightPanel.visible && (
+                <div 
+                  className="flex flex-col border-l border-border bg-card relative shrink-0"
+                  style={{ width: ideState.rightPanel.width }}
+                >
+                  <div 
+                    className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-primary/40 transition-colors z-50 active:bg-primary"
+                    onMouseDown={handleRightPanelResize}
+                  />
+                  <div className="h-9 px-4 flex items-center justify-between border-b border-border/50 bg-muted/20 shrink-0 select-none">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Assistant</span>
+                    <button 
+                      onClick={() => setIdeState(prev => ({ ...prev, rightPanel: { ...prev.rightPanel, visible: false } }))}
+                      className="p-1 hover:bg-muted rounded transition-colors text-muted-foreground"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    {sidebarContent('ai')}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bottom Panel */}

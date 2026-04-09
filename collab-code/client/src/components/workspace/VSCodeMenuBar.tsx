@@ -91,11 +91,89 @@ const VSCodeMenuBar = ({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            <span className={menuBtnStyle}>Selection</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white" onClick={() => document.execCommand('selectAll')}>
+              Select All <span className="ml-auto text-[#858585]">Ctrl+A</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Expand Selection <span className="ml-auto text-[#858585]">Shift+Alt+→</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <span className={menuBtnStyle}>View</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
             <DropdownMenuItem onClick={onShowHistory} className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
               Version History
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-[#454545]" />
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Appearance
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span className={menuBtnStyle}>Go</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Back <span className="ml-auto text-[#858585]">Alt+←</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Forward <span className="ml-auto text-[#858585]">Alt+→</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span className={menuBtnStyle}>Run</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
+            <DropdownMenuItem onClick={onRun} className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white" disabled={runLoading}>
+              Start Debugging <span className="ml-auto text-[#858585]">F5</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onRun} className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white" disabled={runLoading}>
+              Run Without Debugging <span className="ml-auto text-[#858585]">Ctrl+F5</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span className={menuBtnStyle}>Terminal</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              New Terminal <span className="ml-auto text-[#858585]">Ctrl+Shift+`</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Split Terminal <span className="ml-auto text-[#858585]">Ctrl+\</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span className={menuBtnStyle}>Help</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent style={{ background: "#252526", border: "1px solid #454545", borderRadius: 4 }} className="min-w-[180px]">
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Welcome
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              Documentation
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-[#454545]" />
+            <DropdownMenuItem className="text-[#ccc] text-xs focus:bg-[#094771] focus:text-white">
+              About
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

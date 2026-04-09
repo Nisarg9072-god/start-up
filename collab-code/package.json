@@ -19,9 +19,13 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "axios": "^1.13.5",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "jwt-decode": "^4.0.0",
     "monaco-editor": "^0.55.1",
+    "node-pty": "^1.1.0",
     "pg": "^8.20.0",
+    "ws": "^8.20.0",
     "y-monaco": "^0.1.6"
   },
   "devDependencies": {

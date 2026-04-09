@@ -1,5 +1,5 @@
 // WorkspaceIDE — VS Code style layout
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import SidePanel from "@/components/workspace/SidePanel";
@@ -19,6 +19,41 @@ import { Input } from "@/components/UI/input";
 import { Button } from "@/components/UI/button";
 import { toast } from "@/components/UI/use-toast";
 import { Play, X } from "lucide-react";
+
+// ── Lightweight ANSI → React renderer ───────────────────────────────
+const ANSI_COLORS: Record<string, string> = {
+  '30': '#000', '31': '#f14c4c', '32': '#4ec9b0', '33': '#cca700',
+  '34': '#569cd6', '35': '#c586c0', '36': '#4fc1ff', '37': '#d4d4d4',
+  '90': '#555', '91': '#f97171', '92': '#73c991', '93': '#ddb26b',
+  '94': '#4e94e5', '95': '#b98ec7', '96': '#4bc8e8', '97': '#fff',
+};
+
+function AnsiOutput({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let color = '#d4d4d4';
+  let bold = false;
+  let key = 0;
+
+  // Split by ESC sequences
+  const segments = text.split(/\x1b\[([0-9;]*)m/);
+  for (let i = 0; i < segments.length; i++) {
+    if (i % 2 === 0) {
+      // text segment
+      if (segments[i]) {
+        parts.push(<span key={key++} style={{ color, fontWeight: bold ? 'bold' : undefined }}>{segments[i]}</span>);
+      }
+    } else {
+      // escape code
+      const codes = segments[i].split(';');
+      for (const code of codes) {
+        if (code === '0' || code === '') { color = '#d4d4d4'; bold = false; }
+        else if (code === '1') { bold = true; }
+        else if (ANSI_COLORS[code]) { color = ANSI_COLORS[code]; }
+      }
+    }
+  }
+  return <>{parts}</>;
+}
 
 export type ConnectionStatus = "connected" | "reconnecting" | "offline";
 
@@ -56,9 +91,15 @@ const WorkspaceEditor = () => {
   // Create File State
   const [createOpen, setCreateOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("");
-  const [runLoading, setRunLoading] = useState(false);
-  const [runStdin, setRunStdin] = useState("");
-  const [runHistory, setRunHistory] = useState<{ stdout: string; stderr: string; exitCode: number; durationMs: number; language: string; when: string }[]>([]);
+  // ── PTY runner state ──────────────────────────────────────────────────
+  const [runLoading, setRunLoading]     = useState(false);
+  const [termOutput, setTermOutput]     = useState<string>("");    // raw streamed text
+  const [runExited, setRunExited]       = useState<number | null>(null);  // exit code once done
+  const [runStartedAt, setRunStartedAt] = useState<string>("");
+  const runWsRef   = useRef<WebSocket | null>(null);   // /run-pty socket
+  const inputLineRef = useRef<HTMLInputElement | null>(null);
+  const [inputLine, setInputLine]       = useState("");  // current typed line
+  const [isRunning, setIsRunning]       = useState(false);
 
   // Terminal / Sidebar resizing
   const [terminalHeight, setTerminalHeight] = useState<number>(240);
@@ -334,24 +375,132 @@ const WorkspaceEditor = () => {
     } catch { toast({ variant: "destructive", title: "Export Failed" }); }
   };
 
-  // Run code
+  // ── PTY WebSocket runner ─────────────────────────────────────────────────
+  const connectRunPty = (token: string): WebSocket | null => {
+    const WS_BASE = (import.meta as any).env?.VITE_WS_URL ||
+      (window.location.hostname === 'localhost'
+        ? 'ws://localhost:3001'
+        : `wss://${window.location.hostname}:3001`);
+    try {
+      return new WebSocket(`${WS_BASE}/run-pty?token=${encodeURIComponent(token)}`);
+    } catch { return null; }
+  };
+
   const handleRun = async () => {
     if (!activeFileId) { toast({ title: "No file selected" }); return; }
+    setBottomTab("terminal");
+
+    // Kill any running process first
+    if (runWsRef.current) {
+      try { runWsRef.current.send(JSON.stringify({ type: 'kill' })); } catch { }
+      runWsRef.current.close();
+      runWsRef.current = null;
+    }
+
+    // Reset terminal display
+    setTermOutput("");
+    setRunExited(null);
+    setRunStartedAt(new Date().toLocaleTimeString());
+    setIsRunning(true);
     setRunLoading(true);
-    try {
-      const idMap: Record<string, number> = { Python: 71, JavaScript: 63, TypeScript: 74, "C++": 54, C: 50, Java: 62, Go: 60, Rust: 73 };
-      const stdinNorm = runStdin && runStdin.length > 0 ? (runStdin.endsWith("\n") ? runStdin : runStdin + "\n") : runStdin;
-      let result: any;
-      try { result = await api.runner.runJudge0(code, idMap[language] || 63, stdinNorm, activeFileId); }
-      catch { result = await api.runner.runFile(activeFileId, language, stdinNorm); }
-      setRunHistory(prev => [
-        { stdout: result.stdout || "", stderr: result.stderr || "", exitCode: result.exitCode, durationMs: result.durationMs, language, when: new Date().toLocaleTimeString() },
-        ...prev
-      ].slice(0, 20));
-      setBottomTab("terminal");
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Run failed", description: e?.message });
-    } finally { setRunLoading(false); }
+    setInputLine("");
+
+    // Get auth token, then open PTY WebSocket
+    const token = localStorage.getItem("token");
+    if (!token) { toast({ variant: "destructive", title: "Not authenticated" }); return; }
+
+    const ws = connectRunPty(token);
+    if (!ws) {
+      setTermOutput("\x1b[31mFailed to connect to run server.\x1b[0m\n");
+      setIsRunning(false);
+      setRunLoading(false);
+      return;
+    }
+    runWsRef.current = ws;
+
+    ws.onopen = () => {
+      // Send the run command immediately — no stdin prefetch
+      ws.send(JSON.stringify({ type: 'run', fileId: activeFileId, language }));
+      setRunLoading(false);
+      // Focus the input line so the user can type immediately
+      setTimeout(() => inputLineRef.current?.focus(), 150);
+    };
+
+    ws.onmessage = (event) => {
+      let msg: any;
+      try { msg = JSON.parse(event.data); } catch { return; }
+
+      if (msg.type === 'data') {
+        setTermOutput(prev => prev + msg.data);
+        // Auto-scroll
+        setTimeout(() => {
+          if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+        }, 10);
+      } else if (msg.type === 'exit') {
+        setIsRunning(false);
+        setRunExited(msg.code ?? 0);
+        runWsRef.current = null;
+      } else if (msg.type === 'error') {
+        setTermOutput(prev => prev + `\r\n\x1b[31m[Error] ${msg.message}\x1b[0m\r\n`);
+        setIsRunning(false);
+        setRunExited(-1);
+        runWsRef.current = null;
+      }
+    };
+
+    ws.onerror = () => {
+      setTermOutput(prev => prev + `\r\n\x1b[31m[WebSocket error]\x1b[0m\r\n`);
+      setIsRunning(false);
+      setRunLoading(false);
+    };
+
+    ws.onclose = () => {
+      setIsRunning(false);
+      setRunLoading(false);
+    };
+  };
+
+  // Send a line of input to the running process
+  const sendInput = (line: string) => {
+    if (!runWsRef.current) {
+      console.warn('[terminal] sendInput: no WebSocket');
+      return;
+    }
+    if (runWsRef.current.readyState !== WebSocket.OPEN) {
+      console.warn('[terminal] sendInput: WS not open, state =', runWsRef.current.readyState);
+      return;
+    }
+    if (!isRunning) {
+      console.warn('[terminal] sendInput: process is not running');
+      return;
+    }
+
+    // CRITICAL: Echo the typed input into the terminal display WITH a newline.
+    // Without this, the user sees nothing after pressing Enter and thinks it's stuck.
+    setTermOutput(prev => prev + line + '\n');
+
+    // Send to backend: always include \n (backend also guarantees this, double safety)
+    runWsRef.current.send(JSON.stringify({ type: 'input', data: line + '\n' }));
+    console.log('[terminal] sent input:', JSON.stringify(line + '\n'));
+
+    // Clear the input field immediately
+    setInputLine('');
+
+    // Auto-scroll
+    setTimeout(() => {
+      if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }, 20);
+  };
+
+  const killProcess = () => {
+    if (runWsRef.current) {
+      try { runWsRef.current.send(JSON.stringify({ type: 'kill' })); } catch { }
+      runWsRef.current.close();
+      runWsRef.current = null;
+    }
+    setIsRunning(false);
+    setRunExited(-1);
+    setTermOutput(prev => prev + '\r\n\x1b[33m[Process killed]\x1b[0m\r\n');
   };
 
   const activeFileObj = files.find(f => f.id === activeFileId);
@@ -480,11 +629,12 @@ const WorkspaceEditor = () => {
               {activePanel === "run" && (
                 <div className="flex-1 p-3 space-y-3">
                   <div style={{ fontSize: 11, color: "#858585" }}>RUN & DEBUG</div>
-                  <button onClick={handleRun}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded text-sm text-white w-full justify-center"
-                    style={{ background: "#0e7a39" }}>
-                    <Play size={13} />{runLoading ? "Running…" : `Run ${activeFileObj?.name || "file"}`}
-                  </button>
+                  <div style={{ fontSize: 12, color: "#969696" }}>Use the ▶ Run button in the editor tab bar to run the current file. Output appears in the Terminal panel below.</div>
+                  {runStartedAt && (
+                    <div style={{ fontSize: 11, color: "#858585", marginTop: 8 }}>
+                      Last run: {runStartedAt} · exit {runExited ?? "…"} · {isRunning ? "running" : "done"}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -606,54 +756,110 @@ const WorkspaceEditor = () => {
               ))}
               <div className="ml-auto flex items-center pr-3">
                 <span className="text-xs" style={{ color: "#858585" }}>
-                  {runHistory.length > 0 ? `${runHistory[0].when} · exit ${runHistory[0].exitCode}` : ""}
+                  {runStartedAt ? `${runStartedAt} · exit ${runExited ?? '…'}` : ""}
                 </span>
               </div>
             </div>
 
-            {/* Terminal */}
+            {/* ── Live PTY Terminal ── */}
             {bottomTab === "terminal" && (
               <div className="flex flex-col flex-1 overflow-hidden">
-                <div className="flex items-center gap-2 px-3 py-1 flex-shrink-0" style={{ borderBottom: "1px solid #2d2d2d" }}>
-                  <span style={{ fontSize: 11, color: "#858585" }}>stdin:</span>
-                  <input className="flex-1 bg-transparent text-xs font-mono outline-none" style={{ color: "#d4d4d4" }}
-                    placeholder="Program input…" value={runStdin}
-                    onChange={(e) => setRunStdin(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleRun()} />
-                  <button onClick={handleRun} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs flex-shrink-0"
-                    style={{ background: "#0e639c", color: "#fff" }}>
-                    <Play size={10} />{runLoading ? "…" : "Run"}
-                  </button>
-                  <button onClick={() => setRunHistory([])} className="px-2 py-0.5 rounded text-xs flex-shrink-0"
+                {/* toolbar */}
+                <div className="flex items-center gap-2 px-3 flex-shrink-0"
+                  style={{ height: 30, borderBottom: "1px solid #2d2d2d", background: "#252526" }}>
+                  <span style={{ fontSize: 11, color: "#4ec9b0", fontFamily: "monospace" }}>
+                    {isRunning ? `▶ ${language}` : "bash"}
+                  </span>
+                  {runStartedAt && (
+                    <span style={{ fontSize: 10, color: "#555", marginLeft: 4 }}>{runStartedAt}</span>
+                  )}
+                  <div className="flex-1" />
+                  {isRunning && (
+                    <button id="kill-process-btn" onClick={killProcess}
+                      className="px-2 py-0.5 rounded text-xs flex-shrink-0 hover:bg-red-900/40 transition-colors"
+                      style={{ background: "#3c1e1e", color: "#f97171", border: "1px solid #5a2020" }}>
+                      ⏹ Stop
+                    </button>
+                  )}
+                  <button id="clear-terminal-btn" onClick={() => { setTermOutput(""); setRunExited(null); setRunStartedAt(""); setInputLine(""); }}
+                    className="px-2 py-0.5 rounded text-xs flex-shrink-0"
                     style={{ background: "#3c3c3c", color: "#d4d4d4" }}>Clear</button>
                 </div>
+
+                {/* output area */}
                 <div ref={terminalRef} className="flex-1 overflow-auto px-3 py-2 font-mono"
-                  style={{ fontSize: 13, lineHeight: 1.6, background: "#1e1e1e" }}>
-                  {runHistory.length === 0
-                    ? <div style={{ color: "#858585" }}>Terminal ready. Click Run or press Enter in stdin.</div>
-                    : runHistory.map((h, i) => (
-                      <div key={i} className="mb-3">
-                        <div className="mb-0.5" style={{ color: "#569cd6", fontSize: 11 }}>[{h.when}] {h.language} · exit {h.exitCode} in {h.durationMs}ms</div>
-                        {h.stdout && <pre className="whitespace-pre-wrap" style={{ color: "#4ec9b0" }}>{h.stdout}</pre>}
-                        {h.stderr && <pre className="whitespace-pre-wrap" style={{ color: "#f14c4c" }}>{h.stderr}</pre>}
-                      </div>
-                    ))}
+                  style={{ fontSize: 13, lineHeight: 1.55, background: "#1e1e1e", cursor: "text" }}
+                  onClick={() => inputLineRef.current?.focus()}>
+
+                  {!termOutput && !isRunning && runExited === null && (
+                    <div style={{ color: "#555", fontFamily: "monospace", fontSize: 12 }}>
+                      Terminal ready. Click <span style={{ color: "#4ec9b0" }}>▶ Run</span> to start execution.
+                    </div>
+                  )}
+
+                  {/* streamed output — render ANSI codes as colored text */}
+                  {termOutput && (
+                    <pre id="terminal-output" className="whitespace-pre-wrap" style={{ margin: 0 }}>
+                      <AnsiOutput text={termOutput} />
+                    </pre>
+                  )}
+
+                  {/* exit status badge */}
+                  {runExited !== null && (
+                    <div className="mt-1" style={{ fontSize: 11, color: runExited === 0 ? "#4ec9b0" : "#f14c4c" }}>
+                      Process exited with code {runExited}
+                    </div>
+                  )}
+
+                  {runLoading && (
+                    <div className="flex items-center gap-2 mt-1" style={{ color: "#569cd6", fontSize: 12 }}>
+                      <span className="animate-pulse">●</span> Starting process…
+                    </div>
+                  )}
+
+                  {/* stdin input line — always visible when process is running */}
+                  {isRunning && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span style={{ color: "#4ec9b0", fontSize: 13, fontFamily: "monospace" }}>❯</span>
+                      <input
+                        id="terminal-input-line"
+                        ref={inputLineRef}
+                        className="flex-1 bg-transparent outline-none font-mono"
+                        style={{ color: "#d4d4d4", fontSize: 13, caretColor: "#d4d4d4" }}
+                        placeholder=""
+                        value={inputLine}
+                        onChange={(e) => setInputLine(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            sendInput(inputLine);
+                          }
+                          if (e.key === "c" && e.ctrlKey) {
+                            e.preventDefault();
+                            killProcess();
+                          }
+                        }}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
+
             {/* Output */}
             {bottomTab === "output" && (
               <div className="flex-1 overflow-auto px-3 py-2 font-mono" style={{ fontSize: 13, background: "#1e1e1e" }}>
-                {runHistory.length === 0
-                  ? <div style={{ color: "#858585" }}>No output yet.</div>
-                  : runHistory.map((h, i) => (
-                    <div key={i} className="mb-3">
-                      <div style={{ color: "#569cd6", fontSize: 11 }}>[{h.when}] exit {h.exitCode}</div>
-                      {h.stdout && <pre className="whitespace-pre-wrap" style={{ color: "#4ec9b0" }}>{h.stdout}</pre>}
-                      {h.stderr && <pre className="whitespace-pre-wrap" style={{ color: "#f14c4c" }}>{h.stderr}</pre>}
-                    </div>
-                  ))}
+                {!termOutput
+                  ? <div style={{ color: "#858585" }}>No output yet. Click ▶ Run to execute.</div>
+                  : <pre className="whitespace-pre-wrap" style={{ margin: 0 }}><AnsiOutput text={termOutput} /></pre>}
+                {runExited !== null && (
+                  <div className="mt-1" style={{ fontSize: 11, color: runExited === 0 ? "#4ec9b0" : "#f14c4c" }}>
+                    Exit code: {runExited}
+                  </div>
+                )}
               </div>
             )}
 
@@ -677,14 +883,9 @@ const WorkspaceEditor = () => {
             {/* Debug Console */}
             {bottomTab === "debug" && (
               <div className="flex-1 overflow-auto px-3 py-2 font-mono" style={{ fontSize: 13, color: "#569cd6", background: "#1e1e1e" }}>
-                {runHistory.length === 0
+                {!termOutput
                   ? <div style={{ color: "#858585" }}>No debug output.</div>
-                  : runHistory.map((h, i) => (
-                    <div key={i} className="mb-3">
-                      <div style={{ fontSize: 11, color: "#858585" }}>[{h.when}]</div>
-                      <pre className="whitespace-pre-wrap">{JSON.stringify({ exit: h.exitCode, ms: h.durationMs, stdout: h.stdout, stderr: h.stderr }, null, 2)}</pre>
-                    </div>
-                  ))}
+                  : <pre className="whitespace-pre-wrap">{JSON.stringify({ exit: runExited, started: runStartedAt, output: termOutput }, null, 2)}</pre>}
               </div>
             )}
           </div>

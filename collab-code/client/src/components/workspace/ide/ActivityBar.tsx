@@ -1,4 +1,6 @@
 import React from 'react';
+import { SidebarSection } from './types';
+import { cn } from '@/lib/utils';
 import { 
   Files, 
   Search, 
@@ -10,21 +12,23 @@ import {
   Settings,
   Sparkles
 } from 'lucide-react';
-import { SidebarSection } from './types';
-import { cn } from '@/lib/utils';
 
 interface ActivityBarProps {
   activeSection: SidebarSection;
   onSectionChange: (section: SidebarSection) => void;
   onToggleSidebar: () => void;
   sidebarVisible: boolean;
+  onToggleRightPanel?: () => void;
+  rightPanelVisible?: boolean;
 }
 
 const ActivityBar: React.FC<ActivityBarProps> = ({ 
   activeSection, 
   onSectionChange, 
   onToggleSidebar,
-  sidebarVisible
+  sidebarVisible,
+  onToggleRightPanel,
+  rightPanelVisible
 }) => {
   const items: { id: SidebarSection; icon: React.ReactNode; label: string }[] = [
     { id: 'explorer', icon: <Files size={22} strokeWidth={1.5} />, label: 'Explorer' },
@@ -70,7 +74,17 @@ const ActivityBar: React.FC<ActivityBarProps> = ({
         ))}
       </div>
       
-      <div className="pb-2 flex flex-col items-center w-full">
+      <div className="pb-2 flex flex-col items-center w-full gap-2">
+        <button
+          onClick={onToggleRightPanel}
+          className={cn(
+            "w-full aspect-square flex items-center justify-center transition-all relative group",
+            rightPanelVisible ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          )}
+          title="AI Assistant Panel"
+        >
+          <Sparkles size={22} strokeWidth={1.5} />
+        </button>
         <button 
           title="Settings"
           className="w-full aspect-square flex items-center justify-center text-muted-foreground hover:text-foreground transition-all group"

@@ -72,6 +72,59 @@ const WorkspaceIDE = () => {
   const [newFileName, setNewFileName] = useState("");
   const [runLoading, setRunLoading] = useState(false);
   const [runStdin, setRunStdin] = useState("");
+  const [terminalInputMode, setTerminalInputMode] = useState(false);
+  const terminalInputRef = useRef<HTMLInputElement>(null);
+
+
+  const executeCode = async (stdinValue: string) => {
+    if (!activeFileId) return;
+    
+    // 1. Reset state
+    setRunLoading(true);
+    setTerminalInputMode(false);
+    
+    // 2. Switch to output/terminal tab
+    setIdeState(prev => ({ ...prev, panel: { ...prev.panel, visible: true, activeTab: 'output' } }));
+
+    try {
+      const processedStdin = (stdinValue || "").replace(/\\n/g, "\n");
+      const stdinNorm = processedStdin ? (processedStdin.endsWith("\n") ? processedStdin : processedStdin + "\n") : "";
+
+      // 3. Run execution
+      const result = await api.runner.runFile(activeFileId, language, stdinNorm);
+      
+      // Fix: Ensure output is shown correctly using fallback
+      const finalStdout = result.stdout || "";
+      const finalStderr = result.stderr || "";
+      const hasOutput = finalStdout.trim() || finalStderr.trim();
+
+      // 4. Reset and Update history (ensure output is visible)
+      setRunHistory([
+        { 
+          stdout: finalStdout || (hasOutput ? "" : "No Output"), 
+          stderr: finalStderr || "", 
+          exitCode: result.exitCode ?? 0, 
+          durationMs: result.durationMs || 0, 
+          language, 
+          when: new Date().toLocaleTimeString() 
+        }
+      ]);
+
+      diagnosticsStore.clearDiagnostics();
+      if (result.stderr) {
+        const newDiagnostics = parseDiagnostics(result.stderr, files);
+        diagnosticsStore.addDiagnostics(newDiagnostics);
+      }
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Run failed", description: e?.message || "Check backend status" });
+      setRunHistory(prev => [
+        { stdout: "", stderr: e?.message || "Execution failed", exitCode: -1, durationMs: 0, language, when: new Date().toLocaleTimeString() },
+        ...prev
+      ]);
+    } finally {
+      setRunLoading(false);
+    }
+  };
   const [runHistory, setRunHistory] = useState<{ stdout: string; stderr: string; exitCode: number; durationMs: number; language: string; when: string }[]>([]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [ideState, setIdeState] = useState<IDEState>(() => {
@@ -82,6 +135,10 @@ const WorkspaceIDE = () => {
         visible: true,
         width: 260,
         activeSection: 'explorer'
+      },
+      rightPanel: {
+        visible: false,
+        width: 300
       },
       panel: {
         visible: true,
@@ -302,24 +359,13 @@ const WorkspaceIDE = () => {
 
   const handleRun = async () => {
     if (!activeFileId) return;
-    setRunLoading(true);
-    try {
-      const result = await api.runner.runFile(activeFileId, language, runStdin);
-      setRunHistory(prev => [
-        { stdout: result.stdout || "", stderr: result.stderr || "", exitCode: result.exitCode, durationMs: result.durationMs, language, when: new Date().toLocaleTimeString() },
-        ...prev
-      ].slice(0, 20));
-
-      diagnosticsStore.clearDiagnostics();
-      if (result.stderr) {
-        const newDiagnostics = parseDiagnostics(result.stderr, files);
-        diagnosticsStore.addDiagnostics(newDiagnostics);
-      }
-    } catch (e) {
-      toast({ variant: "destructive", title: "Run failed", description: (e as Error).message });
-    } finally {
-      setRunLoading(false);
-    }
+    
+    // Fix: Read input directly from DOM to avoid stale state
+    const inputElement = document.getElementById("terminal-input") as HTMLInputElement;
+    const currentInput = inputElement ? inputElement.value : runStdin;
+    
+    console.log("Sending stdin to backend:", currentInput);
+    executeCode(currentInput);
   };
 
   const handleRestoreVersion = async (versionId: string) => {
@@ -732,7 +778,40 @@ const WorkspaceIDE = () => {
                 {run.stderr && <pre className="text-rose-400 whitespace-pre-wrap">{run.stderr}</pre>}
               </div>
             ))}
-            {runHistory.length === 0 && (
+            
+            {/* Persistent Stdin Field (VS Code style) */}
+            <div className="mt-4 pt-3 border-t border-white/5">
+              <div className="text-muted-foreground/60 mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary/40" />
+                Program Stdin (sent on Run)
+              </div>
+              <div className="flex items-center gap-2 bg-white/5 rounded px-2 py-1.5 group focus-within:bg-white/10 transition-colors">
+                <span className="text-primary font-bold opacity-50 group-focus-within:opacity-100 transition-opacity">❯</span>
+                <input
+                  id="terminal-input"
+                  ref={terminalInputRef}
+                  className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/20"
+                  placeholder="Enter input here (will be passed to program stdin)..."
+                  value={runStdin}
+                  onChange={(e) => setRunStdin(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const inputElement = document.getElementById("terminal-input") as HTMLInputElement;
+                      const currentInput = inputElement ? inputElement.value : runStdin;
+                      executeCode(currentInput);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            {runLoading && (
+              <div className="mt-3 flex items-center gap-2 text-muted-foreground animate-pulse italic">
+                <span>●</span> Running program...
+              </div>
+            )}
+
+            {runHistory.length === 0 && !runLoading && (
               <div className="text-muted-foreground italic">No execution history. Results from "Run Code" will appear here.</div>
             )}
           </div>
@@ -764,6 +843,10 @@ const WorkspaceIDE = () => {
       panelContent={(tab) => getPanelContent(tab)}
       ideState={ideState}
       setIdeState={setIdeState}
+      onToggleRightPanel={() => setIdeState(prev => ({ 
+        ...prev, 
+        rightPanel: { ...prev.rightPanel, visible: !prev.rightPanel.visible } 
+      }))}
     >
       <div className="flex flex-col h-full relative">
         <TopBar 
@@ -779,6 +862,7 @@ const WorkspaceIDE = () => {
           lastSavedAt={lastSavedAt}
           onShowHistory={() => setHistoryOpen(true)}
           onExport={handleExport}
+          runLoading={runLoading}
         />
         <div className="flex-1 relative">
           {activeFileId ? (

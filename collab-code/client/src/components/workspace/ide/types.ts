@@ -11,6 +11,10 @@ export interface IDEState {
     width: number;
     activeSection: SidebarSection;
   };
+  rightPanel: {
+    visible: boolean;
+    width: number;
+  };
   panel: {
     visible: boolean;
     height: number;

@@ -49,6 +49,7 @@ interface TopBarProps {
   lastSavedAt: Date | null;
   onShowHistory: () => void;
   onExport: () => void;
+  runLoading?: boolean;
 }
 
 const TopBar = ({
@@ -63,7 +64,8 @@ const TopBar = ({
   saveStatus,
   lastSavedAt,
   onShowHistory,
-  onExport
+  onExport,
+  runLoading
 }: TopBarProps) => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -147,8 +149,23 @@ const TopBar = ({
           <Clock className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">History</span>
         </Button>
-        <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground" onClick={onRun} title="Run Code">
-          <span className="hidden sm:inline">Run</span>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className={cn(
+            "h-7 gap-1.5 text-xs transition-colors",
+            runLoading ? "text-primary animate-pulse" : "text-muted-foreground hover:text-foreground"
+          )} 
+          onClick={onRun} 
+          disabled={runLoading}
+          title="Run Code"
+        >
+          {runLoading ? (
+            <div className="h-3.5 w-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">{runLoading ? "Running..." : "Run"}</span>
         </Button>
 
         <DropdownMenu>

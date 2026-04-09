@@ -17,7 +17,6 @@ import path from "path";
 const execFileAsync = promisify(execFile);
 import { WebSocketServer } from 'ws';
 import { terminalManager } from './terminalManager.js';
-import { runnerManager } from './runnerManager.js';
 import { runGitCommand } from './gitUtils.js';
 import { lspManager } from './lspManager.js';
 import { aiManager } from './aiManager.js';
@@ -864,31 +863,23 @@ async function runCode(language, sourceCode, stdin = "") {
   const srcPath = path.join(tmpDir, `${fileId}.${cfg.ext}`);
 
   /**
-   * Stable exec-based execution with proper stdin support.
-   * Only writes stdin if the caller actually provided input — avoids phantom
-   * newlines that break programs which don't read from stdin at all.
+   * ✅ Stable exec-based execution for stdin support
+   * Buffering everything prevents race conditions and EOF issues in interactive programs.
    */
   const execWithStdin = (command, stdinValue = "") => {
     return new Promise((resolve) => {
       const start = Date.now();
-      const child = exec(
-        command,
-        { timeout: 10000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, NODE_NO_WARNINGS: "1", PYTHONUNBUFFERED: "1" } },
-        (error, stdout, stderr) => {
-          resolve({
-            stdout: stdout || "",
-            stderr: stderr || (error && error.signal === "SIGTERM" ? "Execution timed out after 10s" : (error ? error.message : "")),
-            exitCode: error?.code ?? (error?.signal ? 1 : 0),
-            durationMs: Date.now() - start,
-          });
-        }
-      );
+      const child = exec(command, { timeout: 15000, maxBuffer: 1024 * 1024, env: { ...process.env, NODE_NO_WARNINGS: "1" } }, (error, stdout, stderr) => {
+        resolve({
+          stdout: stdout || "",
+          stderr: stderr || (error && error.signal === "SIGTERM" ? "Execution timed out (15s)" : (error ? error.message : "")),
+          exitCode: error?.code ?? 0,
+          durationMs: Date.now() - start,
+        });
+      });
 
-      // Only pipe stdin if actual input was provided — writing a phantom \n
-      // to programs that don't read stdin can cause unexpected behaviour.
-      if (stdinValue) {
-        child.stdin.write(stdinValue);
-      }
+      // Always write stdin and end it to let the program read correctly
+      child.stdin.write(stdinValue || "\n");
       child.stdin.end();
     });
   };
@@ -1045,7 +1036,6 @@ const httpServer = createServer(app);
 const lspWss = new WebSocketServer({ noServer: true });
 const termWss = new WebSocketServer({ noServer: true });
 const collabWss = new WebSocketServer({ noServer: true });
-const runPtyWss = new WebSocketServer({ noServer: true });
 
 // ─────────────────────────────────────────────
 // Workspace Broadcast System
@@ -1079,10 +1069,6 @@ httpServer.on('upgrade', (request, socket, head) => {
   } else if (pathname === '/ws') {
     collabWss.handleUpgrade(request, socket, head, (ws) => {
       collabWss.emit('connection', ws, request);
-    });
-  } else if (pathname === '/run-pty') {
-    runPtyWss.handleUpgrade(request, socket, head, (ws) => {
-      runPtyWss.emit('connection', ws, request);
     });
   } else {
     socket.destroy();
@@ -1173,110 +1159,6 @@ termWss.on('connection', async (ws, req) => {
       session.removeListener('exit', onExit);
     });
   } catch (err) { ws.close(1008, 'Invalid token'); }
-});
-
-// ─────────────────────────────────────────────
-// Interactive PTY Runner WebSocket  (/run-pty)
-// ─────────────────────────────────────────────
-// Protocol:
-//   Client → { type: 'run',   fileId, language }       start execution
-//   Client → { type: 'input', data: string }            send keystrokes
-//   Client → { type: 'resize', cols, rows }             resize pty
-//   Client → { type: 'kill' }                           terminate process
-//   Server → { type: 'data',  data: string }            raw output chunk
-//   Server → { type: 'exit',  code: number }            process exited
-//   Server → { type: 'error', message: string }         error
-runPtyWss.on('connection', async (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
-  if (!token) return ws.close(1008, 'Missing token');
-
-  let userId;
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    userId = payload.sub;
-  } catch {
-    return ws.close(1008, 'Invalid token');
-  }
-
-  // Use userId as session key so each user gets their own runner
-  const sessionId = `runner_${userId}`;
-
-  const send = (obj) => {
-    if (ws.readyState === 1) {
-      try { ws.send(JSON.stringify(obj)); } catch { /* ignore */ }
-    }
-  };
-
-  ws.on('message', async (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch { return; }
-
-    if (msg.type === 'run') {
-      const { fileId, language, source_code } = msg;
-
-      // Fetch the latest source from DB (or use source_code if provided directly)
-      let code, lang;
-      try {
-        if (source_code) {
-          // Direct code execution (no DB lookup needed)
-          code = source_code;
-          lang = (language || 'python').toLowerCase().replace(/\s+/g, '');
-        } else {
-          if (!fileId) return send({ type: 'error', message: 'fileId or source_code required' });
-          const { rows } = await pool.query('SELECT content, language FROM project_files WHERE id = $1', [fileId]);
-          if (!rows[0]) return send({ type: 'error', message: 'File not found' });
-          code = rows[0].content;
-          // Normalize: frontend sends 'Python', 'JavaScript', 'C++' etc.
-          lang = (language || rows[0].language || 'python').toLowerCase().replace(/\s+/g, '');
-        }
-      } catch (err) {
-        return send({ type: 'error', message: 'Error fetching file: ' + err.message });
-      }
-
-      const session = runnerManager.create(sessionId);
-
-      session.on('data',  (data)    => send({ type: 'data', data }));
-      session.on('exit',  (exitCode) => send({ type: 'exit', code: exitCode }));
-      session.on('error', (message) => {
-        send({ type: 'error', message });
-        send({ type: 'exit', code: -1 });
-      });
-
-      // Start immediately — no stdin pre-collection
-      session.start(lang, code);
-
-    } else if (msg.type === 'input') {
-      const session = runnerManager.get(sessionId);
-      console.log(`[/run-pty] input received for session ${sessionId}: ${JSON.stringify(msg.data)}, session exists: ${!!session}`);
-      if (session) {
-        session.write(msg.data);
-      } else {
-        console.warn(`[/run-pty] No active session for ${sessionId} — input dropped`);
-        send({ type: 'error', message: 'No active process to receive input' });
-      }
-
-    } else if (msg.type === 'resize') {
-      // spawn-based sessions don't have PTY resize — ignore gracefully
-
-    } else if (msg.type === 'kill') {
-      runnerManager.kill(sessionId);
-      send({ type: 'exit', code: -1 });
-    }
-  });
-
-  ws.on('close', () => {
-    // Don't kill the process on disconnect — user may reconnect
-    // (but do remove listeners from the session to avoid leaks)
-    const session = runnerManager.get(sessionId);
-    if (session) {
-      session.removeAllListeners('data');
-      session.removeAllListeners('exit');
-      session.removeAllListeners('error');
-    }
-  });
-
-  ws.on('error', () => { /* handled above */ });
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import XTermTerminal, { XTermTerminalHandle } from './XTermTerminal';
 import { useTerminalSession } from '@/hooks/useTerminalSession';
 
@@ -7,15 +7,31 @@ interface TerminalPanelProps {
   terminalRef?: React.RefObject<XTermTerminalHandle>;
 }
 
-const TerminalPanel: React.FC<TerminalPanelProps> = ({ workspaceId, terminalRef }) => {
+export interface TerminalPanelHandle {
+  sendCommand: (command: string) => void;
+  clear: () => void;
+}
+
+const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(({ workspaceId, terminalRef: externalTerminalRef }, ref) => {
   const token = localStorage.getItem('token');
   const apiEndpoint = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  const internalTerminalRef = useRef<XTermTerminalHandle>(null);
+  const terminalRef = externalTerminalRef || internalTerminalRef;
 
   const { isConnected, error, sendData, sendResize, addDataListener } = useTerminalSession({
     workspaceId,
     token,
     endpoint: apiEndpoint
   });
+
+  useImperativeHandle(ref, () => ({
+    sendCommand: (command: string) => {
+      sendData(command + '\r');
+    },
+    clear: () => {
+      terminalRef.current?.clear();
+    }
+  }));
 
   useEffect(() => {
     if (!isConnected) return;
@@ -63,6 +79,8 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ workspaceId, terminalRef 
       />
     </div>
   );
-};
+});
+
+TerminalPanel.displayName = 'TerminalPanel';
 
 export default TerminalPanel;
